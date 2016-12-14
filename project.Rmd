@@ -1,0 +1,250 @@
+---
+title: "Final Project"
+author: "Yumeng Shi"
+date: "December 10, 2016"
+output: html_document
+---
+
+## Introduction:
+#### Every time when I am confronted with troubles, I will grab myself a cup of coffee. So as considering my final project, I stepped in Starbucks. Then a question suddenly struck me: Why I choose Starbucks rather than Dunkin Donuts, another popular coffee shop in Boston? This idea is where my final project comes from, which triggered series of questions about when choosing between Starbucks and Dunkin Donuts, why people prefer one over the other. Thus the main purpose of my final project is finding out the differences between the people like Starbucks and the one prefer Dunkin Donuts through data analysis.
+####There are generally three main steps in my final project. Firstly, I searched all possible key words related to Starbucks and Dunkin Donuts and collected accessible information through social network based on these key words. After data collection, secondly I used method wordcloud, sentiment score, map, geolocation to analyze the data. Finally, I summarized the main differences on the basis of data analysis. Now, I will show more details about my conclusion.
+
+## Step 1: Preparing
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(stringr)
+library(dplyr)
+library(knitr)
+library(plyr)
+library(wordcloud)
+library(RColorBrewer)
+library(twitteR)
+library(plotly)
+library(tm)
+library(rmarkdown)
+
+```
+
+### Download data:
+#### In this step I loaded every data I need for further research and got all data from Twitter and then save them as a rds file.
+
+```{r eval=FALSE} 
+api_key <- 	"pP54QITNE3DyEVNs3aX5n4H5r"
+api_secret <- "pkzIbZNdoDm5aeMeYdIU57KQcOq1fIQQRqscauxiAkmFNjy9Z2"
+access_token <- "793887063124897792-46oWwoU3bU0u4JUPFtpvdi6R9dE2C2s"
+access_token_secret <- "Ieon1lMIqsqqzg2oHzMoXFWFdlEUuh4GRBa2MUfAsUbuB"
+setup_twitter_oauth(api_key, api_secret, access_token, access_token_secret)
+
+#get data
+sb <- searchTwitter('starbucks',since='2013-01-01', n = 10000)
+dd <- searchTwitter('dunkin donuts',since='2011-01-01', n = 10000)
+sb.df<-twListToDF(sb)
+dd.df<-twListToDF(dd)
+
+#save as rds file
+save(sb.df,dd.df,file="coffee.Rds") 
+```
+
+## Step 2: Data cleaning
+#### In this step we firstly extracted data from our rds file, and then loaded data to coffee.rds. Then we deleted those useless column that we won't use in this project like "favorited", "replyToSID". 
+
+```{r, message=FALSE, warning=FALSE}
+#sb<-readRDS(file = "starbucks.rds")
+#dd<-readRDS(file = "dunkindonut.rds")
+
+load("coffee.rds")
+
+#delete unuseful column
+sb.df[,c("favorited","favoriteCount","replyToSN","created","replyToSID","replyToUID","id","screenName")] <- list(NULL)
+dd.df[,c("favorited","favoriteCount","replyToSN","created","replyToSID","replyToUID","id","screenName")] <- list(NULL)
+
+```
+
+## Step 3: Wordclouds
+
+#### To build up a word cloud, we firstly text-cleaned those data we got from Twitter, deleting all symbols, expressions, website links and non-English languages.
+
+```{r,message=FALSE,warning=FALSE}
+
+clean.text <- function(some_txt)
+{
+  some_txt = gsub("(RT|via)((?:\\b\\W*@\\w+)+)", "", some_txt)
+  some_txt = gsub("@\\w+", "", some_txt)
+  some_txt = gsub("[^[:alpha:][:space:]]*", "", some_txt)
+  some_txt = gsub("[[:punct:]]", "", some_txt)
+  some_txt = gsub("[[:digit:]]", "", some_txt)
+  some_txt = gsub("http\\w+", "", some_txt)
+  some_txt = gsub("[ \t]{2,}", "", some_txt)
+  some_txt = gsub("^\\s+|\\s+$", "", some_txt)
+  some_txt = gsub("amp", "", some_txt)
+  some_txt <- iconv(some_txt, from = "latin1", to = "ASCII", sub="")
+  
+  return(some_txt)
+}
+```
+
+### Wordcloud for Dunkin Donut
+
+```{r, message=FALSE, warning=FALSE}
+
+dd.df$text<-clean.text(dd.df$text)
+dd.df$text <- tolower(dd.df$text)
+dd.df$text = gsub("dunkin", "", dd.df$text)
+dd.df$text = gsub("donuts", "", dd.df$text)
+
+set.seed(50)
+ddtext<- dd.df$text # to extract only the text of each status object
+ddwords<-unlist(strsplit(ddtext, " "))
+ddwords<-tolower(ddwords)
+ddsample <- sample(ddwords,10000,replace = FALSE)
+wordcloud(ddsample, min.freq=3,colors = brewer.pal(7, "Pastel1"))
+```
+
+#### As showed in wordcloud, the bigger the font size is, the more frequent this word has been mentioned. We can easily find out that these words "new", "get", "miss", "make", "free", "today","coffee","paneer" are most often mentioned by people.
+
+### Wordcloud for Starbucks
+
+```{r, message=FALSE, warning=FALSE}
+sb.df$text<-clean.text(sb.df$text)
+sb.df$text <- tolower(sb.df$text)
+sb.df$text <- gsub("starbucks", "", sb.df$text)
+
+set.seed(50)
+sbtext<- sb.df$text # to extract only the text of each status object
+sbwords<-unlist(strsplit(sbtext, " "))
+sbwords<-tolower(sbwords)
+sbsample <- sample(sbwords,10000,replace = FALSE)
+wordcloud(sbsample, min.freq=3,colors = brewer.pal(7, "Pastel1"))
+```
+
+#### We can see from this word cloud the most frequently mentioned words are "coffee", "still", "just", "thought", "now", and "post".
+
+
+
+## Step 4: Sentiment Analysis
+#### What I did for this part is I downloaded two dictionaries. One with all the positive words and the other contains all the negative words. Based on the definition of these two dictionaries, I scored all the words we got in former steps: If the words is negative, the score will be negative.  Otherwise is the same. Here I need to mention, if the word is not contained in both dictionaries, we considered it as a neutral word, and scored it as 0.
+
+```{r, message=FALSE, warning=FALSE}
+pos.words = readLines("positive-words.txt")
+neg.words = readLines("negative-words.txt")
+
+score.sentiment = function(tweets, pos.words, neg.words, .progress='none')
+{
+  scores = laply(tweets, function(tweet, pos.words, neg.words) {
+    tweet = tolower(tweet)
+    word.list = str_split(tweet, '\\s+')
+    words = unlist(word.list)
+
+    pos.matches = match(words, pos.words)
+    neg.matches = match(words, neg.words)
+    
+    pos.matches = !is.na(pos.matches)
+    neg.matches = !is.na(neg.matches)
+    
+    score = sum(pos.matches) - sum(neg.matches)
+    
+    return(score)
+  }, pos.words, neg.words, .progress=.progress )
+  
+  scores.df = data.frame(score=scores, text=tweets)
+  return(scores.df)
+}
+```
+
+### Sentiment Score's Histogram 
+
+```{r, message=FALSE, warning=FALSE}
+sbscore<-score.sentiment(sb.df$text, pos.words = pos.words, neg.words = neg.words)$score
+hist(sbscore, xlab=" Sentiment Score ",main="Sentiment of Starbucks Tweets ",border="black",col="white", xlim = c(-4,4),breaks = 10)
+
+ddscore<-score.sentiment(dd.df$text, pos.words = pos.words, neg.words = neg.words)$score
+hist(ddscore, xlab=" Sentiment Score",main="Sentiment of Dunkin Donuts Tweets",border="black",col="white", xlim=c(-4,4),breaks = 10)
+
+
+```
+
+#### We collected 10,000 data for both coffee shops. The sentiment scores show that people drink Dunkin Donuts got more posetive emotion than those drink Starbucks.
+
+
+
+## Step 5: Map
+
+```{r, message=FALSE, warning=FALSE}
+g <- list(
+  scope = 'usa',
+  projection = list(type = 'albers usa'),
+  showland = TRUE,
+  landcolor = toRGB("gray95"),
+  subunitcolor = toRGB("gray85"),
+  countrycolor = toRGB("gray85"),
+  countrywidth = 0.5,
+  subunitwidth = 0.5
+)
+```
+
+#### Distribution of "Dunkin Donuts" in the U.S.
+
+```{r, message=FALSE, warning=FALSE}
+dd.df$score<-score.sentiment(dd.df$text, pos.words = pos.words, neg.words = neg.words)$score
+plot_geo(dd.df, lat = ~latitude, lon = ~longitude) %>%
+  add_markers(
+    color = ~score, symbol = I("square"), size = I(8)) %>%
+  colorbar(title = "score") %>%
+  layout(
+    title = 'Dunkin Donuts Sentiment Score', geo = g
+  )
+```
+
+#### From the map we can find out DD stores are intensively distributed in east side. So in big city as New York, people drink Dunkin Donuts tend to have a lower mood than people from west or middle.
+
+#### Distribution of "Starbucks" in the U.S.
+
+```{r, message=FALSE, warning=FALSE}
+sb.df$score<-score.sentiment(sb.df$text, pos.words = pos.words, neg.words = neg.words)$score
+plot_geo(sb.df, lat = ~latitude, lon = ~longitude) %>%
+  add_markers(
+    color = ~score, symbol = I("square"), size = I(8)) %>%
+  colorbar(title = "score") %>%
+  layout(
+    title = 'Starbucks Sentiment Score', geo = g
+  )
+```
+
+#### This graph shows that the mood of people drink Starbucks do not change a lot according to districts.
+
+
+## Step 6: Geolocation
+
+```{r, message=FALSE, warning=FALSE}
+g <- list(
+  scope = 'usa',
+  projection = list(type = 'albers usa'),
+  showland = TRUE,
+  landcolor = toRGB("gray95"),
+  subunitcolor = toRGB("gray85"),
+  countrycolor = toRGB("gray85"),
+  countrywidth = 0.5,
+  subunitwidth = 0.5
+)
+
+#Dunkin Donut
+ddnew.df<-subset(dd.df, !latitude %in% NA)
+dd<-plot_geo(ddnew.df, lat = ~latitude, lon = ~longitude) %>%
+  layout(title = 'Tweets "Dunkin Donut" Distribution', geo = g)
+dd
+
+#Starbucks
+sbnew.df<-subset(sb.df, !latitude %in% NA)
+sb<-plot_geo(sbnew.df, lat = ~latitude, lon = ~longitude) %>%
+  layout(title = 'Tweets "Starbucks" Distribution', geo = g)
+sb
+```
+
+####From these two graphs we can see, twitters about Dunkin Donut usually posted from the East side, because most Dunkin Donut stores are there. There are few people in the middle, thus neither Dunkin Donut nor Starbucks has lots of stores there. In the West side, it is obvious that Starbucks's topic are far more than Dunkin Donut's.
+
+####Reference for dictionary:
+######Minqing Hu and Bing Liu. "Mining and Summarizing Customer Reviews."; Proceedings of the ACM SIGKDD International Conference on Knowledge; Discovery and Data Mining (KDD-2004), Aug 22-25, 2004, Seattle,; Washington, USA,;
+######Bing Liu, Minqing Hu and Junsheng Cheng. "Opinion Observer: Analyzing;       and Comparing Opinions on the Web." Proceedings of the 14th; International World Wide Web conference (WWW-2005), May 10-14,; 2005, Chiba, Japan.
+
